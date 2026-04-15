@@ -1,41 +1,30 @@
-import { useState, useEffect, useRef } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { useState, useEffect, useRef, useCallback } from "react";
 
-// ── Palette & design tokens ──────────────────────────────────────────────────
+const GOOGLE_MAPS_API_KEY = "AIzaSyAd2kPUWd-cMhs2r4ScEFZDtHuvGQgSZbY";
+
+// ── Palette — modern civic tech ────────────────────────────────────────
 const COLORS = {
-  bg: "#0B1120",
-  surface: "#111827",
-  surfaceHigh: "#1a2540",
-  border: "#1e3a5f",
-  accent: "#2563eb",
+  bg: "#f1f5f9",
+  surface: "#ffffff",
+  surfaceHigh: "#f8fafc",
+  surfaceMid: "#e8eef6",
+  border: "#e2e8f0",
+  accent: "#1d4ed8",
   accentLight: "#3b82f6",
-  accentGlow: "rgba(37,99,235,0.25)",
-  danger: "#ef4444",
-  warning: "#f59e0b",
-  success: "#10b981",
-  text: "#e2e8f0",
+  accentGlow: "rgba(29,78,216,0.15)",
+  danger: "#dc2626",
+  warning: "#d97706",
+  success: "#059669",
+  text: "#0f172a",
   textMuted: "#64748b",
-  textDim: "#94a3b8",
-  pin: {
-    high: "#ef4444",
-    medium: "#f59e0b",
-    low: "#10b981",
-  },
+  textDim: "#475569",
+  pin: { high: "#dc2626", medium: "#d97706", low: "#059669" },
 };
 
-// ── Licab municipality center (Nueva Ecija, PH) ──────────────────────────────
 const LICAB_CENTER = { lat: 15.6394, lng: 120.8064 };
-const LICAB_BOUNDS = {
-  minLat: 15.59,
-  maxLat: 15.69,
-  minLng: 120.76,
-  maxLng: 120.85,
-};
+const LICAB_BOUNDS = { minLat: 15.59, maxLat: 15.69, minLng: 120.76, maxLng: 120.85 };
 
-// ── Scoring definitions ──────────────────────────────────────────────────────
 const INFRA_TYPES = ["Road", "Bridge", "Public Building"];
-
 const CHECKLIST = {
   Road: [
     { id: "r1", label: "Large cracks (> 5 cm wide)", weight: 3 },
@@ -71,100 +60,20 @@ const getSeverity = (score) => {
   if (score >= 4) return "Medium";
   return "Low";
 };
-
 const severityColor = (s) =>
   s === "High" ? COLORS.pin.high : s === "Medium" ? COLORS.pin.medium : COLORS.pin.low;
+const severityIcon = (s) => (s === "High" ? "🔴" : s === "Medium" ? "🟡" : "🟢");
+const typeIcon = (t) => (t === "Road" ? "🛣️" : t === "Bridge" ? "🌉" : "🏛️");
 
-// ── Mock approved reports ────────────────────────────────────────────────────
+// Mock approved reports — added placeName field
 const MOCK_REPORTS = [
-  {
-    id: 1,
-    lat: 15.642,
-    lng: 120.81,
-    type: "Road",
-    severity: "High",
-    score: 12,
-    desc: "Large potholes and complete surface failure along the main highway.",
-    date: "2025-04-10",
-    photo: null,
-  },
-  {
-    id: 2,
-    lat: 15.635,
-    lng: 120.798,
-    type: "Bridge",
-    severity: "Medium",
-    score: 6,
-    desc: "Visible deck cracks and corroding railings on the barangay bridge.",
-    date: "2025-04-08",
-    photo: null,
-  },
-  {
-    id: 3,
-    lat: 15.642,
-    lng: 120.81,
-    type: "Public Building",
-    severity: "Low",
-    score: 2,
-    desc: "Hairline wall cracks in the covered court.",
-    date: "2025-04-07",
-    photo: null,
-  },
-  {
-    id: 4,
-    lat: 15.628,
-    lng: 120.815,
-    type: "Road",
-    severity: "Medium",
-    score: 5,
-    desc: "Multiple potholes and drainage problems near the market area.",
-    date: "2025-04-05",
-    photo: null,
-  },
-  {
-    id: 5,
-    lat: 15.652,
-    lng: 120.802,
-    type: "Bridge",
-    severity: "High",
-    score: 13,
-    desc: "Foundation displacement and exposed rebar on bridge near north sitio.",
-    date: "2025-04-03",
-    photo: null,
-  },
+  { id: 1, lat: 15.642, lng: 120.81, type: "Road", score: 12, placeName: "Brgy. Cuyapo Road, Licab", desc: "Large potholes and complete surface failure along the main highway.", date: "2025-04-10", photo: null },
+  { id: 2, lat: 15.635, lng: 120.798, type: "Bridge", score: 6, placeName: "Barangay Bridge, Licab", desc: "Visible deck cracks and corroding railings on the barangay bridge.", date: "2025-04-08", photo: null },
+  { id: 3, lat: 15.642, lng: 120.81, type: "Public Building", score: 2, placeName: "Covered Court, Licab", desc: "Hairline wall cracks in the covered court.", date: "2025-04-07", photo: null },
+  { id: 4, lat: 15.628, lng: 120.815, type: "Road", score: 5, placeName: "Public Market Area, Licab", desc: "Multiple potholes and drainage problems near the market area.", date: "2025-04-05", photo: null },
+  { id: 5, lat: 15.652, lng: 120.802, type: "Bridge", score: 13, placeName: "North Sitio Bridge, Licab", desc: "Foundation displacement and exposed rebar on bridge near north sitio.", date: "2025-04-03", photo: null },
 ];
 
-// ── Create a custom Leaflet divIcon for each severity ──────────────────────
-const createPinIcon = (severity, count = 1) => {
-  const color = severityColor(severity);
-  const badge =
-    count > 1
-      ? `<div style="
-          position:absolute;top:-6px;right:-6px;
-          background:#1e293b;border:1.5px solid ${color};
-          color:white;font-size:9px;font-weight:700;
-          border-radius:50%;width:16px;height:16px;
-          display:flex;align-items:center;justify-content:center;line-height:1;">
-          ${count}
-        </div>`
-      : "";
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="-14 -18 28 36">
-      <circle r="14" fill="${color}" opacity="0.25"/>
-      <path d="M0,-18 C8,-18 14,-12 14,-5 C14,5 0,18 0,18 C0,18 -14,5 -14,-5 C-14,-12 -8,-18 0,-18 Z"
-            fill="${color}" stroke="white" stroke-width="1.5"/>
-      <circle cx="0" cy="-5" r="5" fill="white" opacity="0.85"/>
-    </svg>`;
-  return L.divIcon({
-    className: "",
-    html: `<div style="position:relative;display:inline-block;">${svg}${badge}</div>`,
-    iconSize: [28, 36],
-    iconAnchor: [14, 36],
-    popupAnchor: [0, -36],
-  });
-};
-
-// ── Group overlapping reports (same lat/lng cluster) ────────────────────────
 const groupReports = (reports) => {
   const groups = [];
   reports.forEach((r) => {
@@ -183,124 +92,319 @@ const groupReports = (reports) => {
   return groups;
 };
 
+// Light map styles
+const LIGHT_MAP_STYLES = [
+  { elementType: "geometry", stylers: [{ color: "#f5f7fa" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#f5f7fa" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#7a8caa" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#3a5f8a" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#7a9bbf" }] },
+  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#d8edda" }] },
+  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#5a8a6a" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#dde3ec" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#8a9aaa" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#e8eef7" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#c8d4e6" }] },
+  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#6a7a9a" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#e8eef7" }] },
+  { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#8a9aaa" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#c8dff5" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#5a7a9a" }] },
+  { featureType: "water", elementType: "labels.text.stroke", stylers: [{ color: "#c8dff5" }] },
+];
+
+const loadGoogleMaps = (apiKey) => {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) { resolve(window.google.maps); return; }
+    const existing = document.getElementById("google-maps-script");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.google.maps));
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = "google-maps-script";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(window.google.maps);
+    script.onerror = () => reject(new Error("Google Maps failed to load"));
+    document.head.appendChild(script);
+  });
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // COMPONENT: Report Panel
 // ════════════════════════════════════════════════════════════════════════════
-function ReportPanel({ group, onClose }) {
+function ReportPanel({ group, onClose, isMobile }) {
   const sorted = [...group.reports].sort((a, b) => b.score - a.score);
   return (
-    <div style={styles.panel}>
-      <div style={styles.panelHeader}>
-        <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: 1, color: COLORS.textDim }}>
-          REPORTS AT LOCATION
-        </span>
-        <button onClick={onClose} style={styles.closeBtn}>✕</button>
+    <aside style={getPanelWrapStyle(isMobile)}>
+      <div style={panelStyles.header}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 9, height: 9, borderRadius: "50%", background: severityColor(group.topSeverity), boxShadow: `0 0 8px ${severityColor(group.topSeverity)}88` }} />
+          <span style={{ fontWeight: 700, fontSize: 12, letterSpacing: 1.2, color: COLORS.textMuted, textTransform: "uppercase" }}>
+            {sorted.length} Report{sorted.length > 1 ? "s" : ""} at Location
+          </span>
+        </div>
+        <button onClick={onClose} style={panelStyles.closeBtn} aria-label="Close">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M1 1L13 13M13 1L1 13" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
-      <div style={{ overflowY: "auto", maxHeight: 400 }}>
-        {sorted.map((r, i) => (
-          <div
-            key={r.id}
-            style={{ ...styles.reportCard, borderLeft: `3px solid ${severityColor(getSeverity(r.score))}` }}
-          >
-            <div style={styles.reportCardTop}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textDim, letterSpacing: 1 }}>
-                #{i + 1} · {r.type.toUpperCase()}
-              </span>
-              <span
-                style={{
-                  ...styles.badge,
-                  background: severityColor(getSeverity(r.score)) + "22",
-                  color: severityColor(getSeverity(r.score)),
-                  border: `1px solid ${severityColor(getSeverity(r.score))}55`,
-                }}
-              >
-                {getSeverity(r.score)} · Score {r.score}
-              </span>
+      <div style={{ overflowY: "auto", flex: 1, padding: "6px 0" }}>
+        {sorted.map((r) => {
+          const sev = getSeverity(r.score);
+          return (
+            <div key={r.id} style={{ ...panelStyles.card, borderLeft: `3px solid ${severityColor(sev)}` }}>
+              <div style={panelStyles.cardTop}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 15 }}>{typeIcon(r.type)}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.text }}>{r.type}</span>
+                </div>
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+                  background: severityColor(sev) + "18",
+                  color: severityColor(sev),
+                  border: `1px solid ${severityColor(sev)}44`,
+                  letterSpacing: 0.5,
+                }}>
+                  {severityIcon(sev)} {sev} · {r.score}pts
+                </span>
+              </div>
+              {/* Show place name in report panel */}
+              {r.placeName && (
+                <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}>
+                  <span style={{ fontSize: 11 }}>📍</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.accent }}>{r.placeName}</span>
+                </div>
+              )}
+              <p style={{ margin: "6px 0 6px", fontSize: 13, color: COLORS.textDim, lineHeight: 1.6 }}>{r.desc}</p>
+              <span style={{ fontSize: 11, color: COLORS.textMuted }}>📅 {r.date}</span>
             </div>
-            <p style={{ margin: "6px 0 4px", fontSize: 13, color: COLORS.text, lineHeight: 1.5 }}>
-              {r.desc}
-            </p>
-            <span style={{ fontSize: 11, color: COLORS.textMuted }}>{r.date}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </div>
+    </aside>
   );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // COMPONENT: Submit Form
 // ════════════════════════════════════════════════════════════════════════════
-function SubmitForm({ pin, onClose, onSubmitted }) {
+function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
   const [type, setType] = useState("");
   const [checks, setChecks] = useState({});
+  const [manualSeverity, setManualSeverity] = useState("");
   const [desc, setDesc] = useState("");
   const [photoName, setPhotoName] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [respondentName, setRespondentName] = useState("");
+  const [locationName, setLocationName] = useState("");
+  const [locationLoading, setLocationLoading] = useState(true);
+  const [activePin, setActivePin] = useState(pin);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoError, setGeoError] = useState("");
   const fileRef = useRef();
+
+  const reverseGeocode = useCallback(async (lat, lng, onDone) => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`,
+        { headers: { "Accept-Language": "en", "User-Agent": "LicabInfraWatch/1.0" } }
+      );
+      const data = await res.json();
+      if (data && data.address) {
+        const a = data.address;
+        const road = a.road || a.pedestrian || a.footway || "";
+        const village = a.village || a.suburb || a.neighbourhood || a.hamlet || "";
+        const city = a.city || a.town || a.municipality || a.county || "";
+        const name = data.name || "";
+        if (name && name !== road) setLocationName(name + (village ? `, ${village}` : city ? `, ${city}` : ""));
+        else if (road && village) setLocationName(`${road}, ${village}`);
+        else if (road && city) setLocationName(`${road}, ${city}`);
+        else if (village && city) setLocationName(`${village}, ${city}`);
+        else if (city) setLocationName(city);
+        else setLocationName(data.display_name?.split(",").slice(0, 3).join(",").trim() || `${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E`);
+      } else {
+        setLocationName(`${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E`);
+      }
+    } catch {
+      setLocationName(`${lat.toFixed(5)}° N, ${lng.toFixed(5)}° E`);
+    }
+    onDone && onDone();
+  }, []);
+
+  useEffect(() => {
+    if (!activePin) { setLocationLoading(false); return; }
+    reverseGeocode(activePin.lat, activePin.lng, () => setLocationLoading(false));
+  }, []);
+
+  const handleGetCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoError("Geolocation is not supported by your browser.");
+      return;
+    }
+    setGeoLoading(true);
+    setGeoError("");
+    // Show "locating" state but don't update locationName yet
+    setLocationLoading(false); // keep existing name visible while searching
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setActivePin({ lat, lng });
+        setLocationLoading(true); // now resolving new location name
+        reverseGeocode(lat, lng, () => { setLocationLoading(false); setGeoLoading(false); });
+      },
+      () => {
+        setGeoLoading(false);
+        setGeoError("Could not get your location. Please allow location access.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   const items = type ? CHECKLIST[type] : [];
   const score = items.reduce((s, i) => s + (checks[i.id] ? i.weight : 0), 0);
   const severity = type && score > 0 ? getSeverity(score) : null;
-
   const toggle = (id) => setChecks((p) => ({ ...p, [id]: !p[id] }));
 
   const handleSubmit = () => {
-    if (!type || !desc.trim()) return;
+    if (!type || !desc.trim() || !manualSeverity) return;
     setSubmitted(true);
-    setTimeout(() => {
-      onSubmitted();
-    }, 2200);
+    setTimeout(() => onSubmitted(), 2200);
   };
 
   if (submitted) {
     return (
-      <div style={styles.formWrap}>
-        <div style={{ textAlign: "center", padding: "40px 20px" }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-          <h3 style={{ color: COLORS.success, margin: "0 0 8px", fontSize: 18 }}>Report Submitted!</h3>
-          <p style={{ color: COLORS.textMuted, fontSize: 13 }}>
+      <aside style={getPanelWrapStyle(isMobile)}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, padding: "40px 24px", textAlign: "center" }}>
+          <div style={{ width: 68, height: 68, borderRadius: "50%", background: COLORS.success + "18", border: `2px solid ${COLORS.success}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, marginBottom: 16 }}>✅</div>
+          <h3 style={{ color: COLORS.success, margin: "0 0 10px", fontSize: 18, fontWeight: 800 }}>Report Submitted!</h3>
+          <p style={{ color: COLORS.textMuted, fontSize: 13, lineHeight: 1.7, maxWidth: 260 }}>
             Your report is pending admin verification. It will appear on the map once approved.
           </p>
         </div>
-      </div>
+      </aside>
     );
   }
 
+  const canSubmit = type && desc.trim() && manualSeverity;
+
   return (
-    <div style={styles.formWrap}>
-      <div style={styles.panelHeader}>
-        <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: 1, color: COLORS.textDim }}>
-          NEW REPORT
-        </span>
-        <button onClick={onClose} style={styles.closeBtn}>✕</button>
+    <aside style={getPanelWrapStyle(isMobile)}>
+      <div style={panelStyles.header}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 16 }}>📍</span>
+          <span style={{ fontWeight: 700, fontSize: 12, letterSpacing: 1.2, color: COLORS.textMuted, textTransform: "uppercase" }}>New Report</span>
+        </div>
+        <button onClick={onClose} style={panelStyles.closeBtn} aria-label="Close">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M1 1L13 13M13 1L1 13" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
 
-      <div style={{ overflowY: "auto", maxHeight: 480, paddingRight: 4 }}>
+      <div style={{ overflowY: "auto", flex: 1 }}>
         {/* Location */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>📍 Pinned Location</label>
-          <div style={{ ...styles.input, color: COLORS.textMuted, fontSize: 12 }}>
-            {pin.lat.toFixed(5)}° N, {pin.lng.toFixed(5)}° E
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>Pinned Location</label>
+          <div style={{ ...panelStyles.infoBox }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <span style={{ fontSize: 14, marginTop: 2 }}>📌</span>
+              <div style={{ flex: 1 }}>
+                {locationLoading ? (
+                  <span style={{ color: COLORS.textMuted, fontStyle: "italic", fontSize: 13 }}>Resolving location name…</span>
+                ) : locationName ? (
+                  <span style={{ color: COLORS.text, fontWeight: 700, fontSize: 13, lineHeight: 1.45, display: "block", marginBottom: 3 }}>{locationName}</span>
+                ) : null}
+                <div style={{ color: COLORS.textMuted, fontSize: 11 }}>
+                  {activePin.lat.toFixed(5)}° N, {activePin.lng.toFixed(5)}° E
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleGetCurrentLocation}
+              disabled={geoLoading}
+              style={{
+                marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                border: `1px solid ${COLORS.accentLight}55`,
+                background: geoLoading ? COLORS.surfaceMid : COLORS.accent + "10",
+                color: geoLoading ? COLORS.textMuted : COLORS.accent,
+                fontSize: 12, fontWeight: 700, cursor: geoLoading ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s",
+                width: "100%", justifyContent: "center",
+              }}
+            >
+              {geoLoading
+                ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> Finding your location…</>
+                : <><span>🎯</span> Use My Current Location</>
+              }
+            </button>
+            {geoError && <p style={{ margin: "6px 0 0", fontSize: 11, color: COLORS.danger }}>{geoError}</p>}
           </div>
         </div>
 
+        {/* Respondent Name */}
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>
+            Respondent Name
+            <span style={{ color: COLORS.textMuted, fontSize: 9, marginLeft: 6, fontWeight: 400 }}>(OPTIONAL)</span>
+          </label>
+          <input
+            type="text"
+            value={respondentName}
+            onChange={(e) => setRespondentName(e.target.value)}
+            placeholder="Enter your full name…"
+            style={{ ...panelStyles.input }}
+          />
+        </div>
+
         {/* Type */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Infrastructure Type</label>
-          <div style={{ display: "flex", gap: 8 }}>
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>Infrastructure Type <span style={{ color: COLORS.danger }}>*</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
             {INFRA_TYPES.map((t) => (
-              <button
-                key={t}
-                onClick={() => { setType(t); setChecks({}); }}
+              <button key={t} onClick={() => { setType(t); setChecks({}); }}
                 style={{
-                  ...styles.typeBtn,
+                  flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 11, fontWeight: 700,
+                  cursor: "pointer", letterSpacing: 0.3, transition: "all 0.15s",
                   background: type === t ? COLORS.accent : COLORS.surfaceHigh,
-                  border: `1px solid ${type === t ? COLORS.accentLight : COLORS.border}`,
+                  border: `1.5px solid ${type === t ? COLORS.accentLight : COLORS.border}`,
                   color: type === t ? "white" : COLORS.textDim,
-                }}
-              >
-                {t}
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                  boxShadow: type === t ? `0 2px 10px ${COLORS.accentGlow}` : "none",
+                }}>
+                <span style={{ fontSize: 18 }}>{typeIcon(t)}</span>
+                <span>{t}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Damage Level */}
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>Damage Level <span style={{ color: COLORS.danger }}>*</span></label>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { value: "High", icon: "🔴", color: COLORS.pin.high },
+              { value: "Medium", icon: "🟡", color: COLORS.pin.medium },
+              { value: "Low", icon: "🟢", color: COLORS.pin.low },
+            ].map(({ value, icon, color }) => (
+              <button key={value} onClick={() => setManualSeverity(value)}
+                style={{
+                  flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 11, fontWeight: 700,
+                  cursor: "pointer", letterSpacing: 0.5, transition: "all 0.15s",
+                  background: manualSeverity === value ? color + "18" : COLORS.surfaceHigh,
+                  border: `1.5px solid ${manualSeverity === value ? color : COLORS.border}`,
+                  color: manualSeverity === value ? color : COLORS.textDim,
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  boxShadow: manualSeverity === value ? `0 0 10px ${color}33` : "none",
+                }}>
+                <span style={{ fontSize: 18 }}>{icon}</span>
+                <span>{value}</span>
               </button>
             ))}
           </div>
@@ -308,35 +412,28 @@ function SubmitForm({ pin, onClose, onSubmitted }) {
 
         {/* Checklist */}
         {type && (
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Damage Checklist</label>
-            <div style={styles.checkGrid}>
-              {items.map((item) => (
-                <label key={item.id} style={styles.checkItem}>
-                  <input
-                    type="checkbox"
-                    checked={!!checks[item.id]}
-                    onChange={() => toggle(item.id)}
-                    style={{ accentColor: COLORS.accent, marginRight: 8 }}
-                  />
-                  <span style={{ fontSize: 13, color: COLORS.textDim, flex: 1 }}>{item.label}</span>
-                  <span style={{ fontSize: 11, color: COLORS.textMuted }}>+{item.weight}</span>
+          <div style={panelStyles.section}>
+            <label style={panelStyles.label}>Damage Checklist</label>
+            <div style={{ background: COLORS.surfaceHigh, borderRadius: 10, border: `1px solid ${COLORS.border}`, overflow: "hidden" }}>
+              {items.map((item, idx) => (
+                <label key={item.id} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+                  cursor: "pointer", background: checks[item.id] ? COLORS.accent + "0d" : "transparent",
+                  borderBottom: idx < items.length - 1 ? `1px solid ${COLORS.border}` : "none",
+                  transition: "background 0.1s",
+                }}>
+                  <input type="checkbox" checked={!!checks[item.id]} onChange={() => toggle(item.id)}
+                    style={{ accentColor: COLORS.accent, width: 15, height: 15, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, color: checks[item.id] ? COLORS.text : COLORS.textDim, flex: 1 }}>{item.label}</span>
+                  <span style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 700, background: COLORS.border, padding: "1px 7px", borderRadius: 10 }}>+{item.weight}</span>
                 </label>
               ))}
             </div>
             {score > 0 && (
-              <div style={styles.severityBar}>
-                <span style={{ fontSize: 12, color: COLORS.textMuted }}>Score: {score}</span>
-                <span
-                  style={{
-                    ...styles.badge,
-                    background: severityColor(severity) + "22",
-                    color: severityColor(severity),
-                    border: `1px solid ${severityColor(severity)}55`,
-                    marginLeft: "auto",
-                  }}
-                >
-                  {severity} Severity
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, padding: "8px 12px", background: COLORS.surfaceMid, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>
+                <span style={{ fontSize: 12, color: COLORS.textDim }}>Score: <strong style={{ color: COLORS.text }}>{score}</strong></span>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: severityColor(severity) + "18", color: severityColor(severity), border: `1px solid ${severityColor(severity)}44` }}>
+                  {severityIcon(severity)} {severity} Severity
                 </span>
               </div>
             )}
@@ -344,221 +441,225 @@ function SubmitForm({ pin, onClose, onSubmitted }) {
         )}
 
         {/* Description */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Description</label>
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            placeholder="Describe the damage in detail..."
-            style={{ ...styles.input, height: 88, resize: "vertical", fontFamily: "inherit" }}
-          />
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>Description <span style={{ color: COLORS.danger }}>*</span></label>
+          <textarea value={desc} onChange={(e) => setDesc(e.target.value)}
+            placeholder="Describe the damage in detail…"
+            style={{ ...panelStyles.input, height: 88, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
         </div>
 
         {/* Photo */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Photo (optional)</label>
-          <div onClick={() => fileRef.current.click()} style={styles.dropzone}>
-            {photoName ? (
-              <span style={{ color: COLORS.accentLight, fontSize: 13 }}>📷 {photoName}</span>
-            ) : (
-              <span style={{ color: COLORS.textMuted, fontSize: 13 }}>Click to attach a photo</span>
-            )}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => setPhotoName(e.target.files[0]?.name || "")}
-            />
+        <div style={panelStyles.section}>
+          <label style={panelStyles.label}>Photo (optional)</label>
+          <div onClick={() => fileRef.current.click()} style={{
+            border: `1.5px dashed ${COLORS.border}`, borderRadius: 10, padding: "14px",
+            textAlign: "center", cursor: "pointer", background: COLORS.surfaceHigh,
+            transition: "border-color 0.15s",
+          }}>
+            {photoName
+              ? <span style={{ color: COLORS.accent, fontSize: 13, fontWeight: 600 }}>📷 {photoName}</span>
+              : <><div style={{ fontSize: 24, marginBottom: 4 }}>📸</div><span style={{ color: COLORS.textMuted, fontSize: 12 }}>Click to attach a photo</span></>
+            }
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+              onChange={(e) => setPhotoName(e.target.files[0]?.name || "")} />
           </div>
         </div>
 
-        <button
-          onClick={handleSubmit}
-          disabled={!type || !desc.trim()}
-          style={{
-            ...styles.submitBtn,
-            opacity: !type || !desc.trim() ? 0.45 : 1,
-            cursor: !type || !desc.trim() ? "not-allowed" : "pointer",
-          }}
-        >
-          Submit Report
-        </button>
+        <div style={{ padding: isMobile ? "12px 16px 32px" : "12px 16px 20px", flexShrink: 0 }}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{
+              width: "100%", padding: "13px", borderRadius: 11, border: "none",
+              background: canSubmit ? `linear-gradient(135deg, ${COLORS.accent}, ${COLORS.accentLight})` : COLORS.surfaceMid,
+              color: canSubmit ? "white" : COLORS.textMuted,
+              fontWeight: 700, fontSize: 14, letterSpacing: 0.5,
+              boxShadow: canSubmit ? `0 4px 18px ${COLORS.accentGlow}` : "none",
+              transition: "all 0.2s", cursor: canSubmit ? "pointer" : "not-allowed",
+            }}>
+            {canSubmit ? "🚀 Submit Report" : "Complete all required fields"}
+          </button>
+        </div>
       </div>
-    </div>
+    </aside>
   );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// COMPONENT: Leaflet Map
+// COMPONENT: Google Map
 // ════════════════════════════════════════════════════════════════════════════
-function LeafletMap({ reports, pinMode, onMapClick, onPinClick, newPin, selectedGroup }) {
+function GoogleMap({ reports, pinMode, onMapClick, onPinClick, newPin, selectedGroup }) {
   const mapRef = useRef(null);
-  const leafletMapRef = useRef(null);
+  const googleMapRef = useRef(null);
   const markersRef = useRef([]);
   const newPinMarkerRef = useRef(null);
-  const clickHandlerRef = useRef(null);
+  const onMapClickRef = useRef(onMapClick);
+  const pinModeRef = useRef(pinMode);
+  const [mapsLoaded, setMapsLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
-  // Initialize map
+  useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
+  useEffect(() => { pinModeRef.current = pinMode; }, [pinMode]);
+  const onPinClickRef = useRef(onPinClick);
+  useEffect(() => { onPinClickRef.current = onPinClick; }, [onPinClick]);
+
   useEffect(() => {
-    if (leafletMapRef.current) return;
-
-    const map = L.map(mapRef.current, {
-      center: [LICAB_CENTER.lat, LICAB_CENTER.lng],
-      zoom: 13,
-      zoomControl: true,
-    });
-
-    // OpenStreetMap tile layer (free, no API key)
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution:
-        '© <a href="https://www.openstreetmap.org/copyright" style="color:#64748b">OpenStreetMap</a> contributors',
-      maxZoom: 19,
-    }).addTo(map);
-
-    // Dark overlay filter via CSS — applied directly on the tile layer pane
-    const style = document.createElement("style");
-    style.textContent = `
-      .leaflet-tile-pane { filter: brightness(0.55) saturate(0.7) hue-rotate(190deg); }
-      .leaflet-control-attribution { background: rgba(11,17,32,0.85) !important; color: #64748b !important; font-size: 10px !important; }
-      .leaflet-control-attribution a { color: #64748b !important; }
-      .leaflet-control-zoom a { background: #111827 !important; color: #94a3b8 !important; border-color: #1e3a5f !important; }
-      .leaflet-control-zoom a:hover { background: #1a2540 !important; color: #e2e8f0 !important; }
-    `;
-    document.head.appendChild(style);
-
-    leafletMapRef.current = map;
-    return () => {
-      map.remove();
-      leafletMapRef.current = null;
-    };
+    loadGoogleMaps(GOOGLE_MAPS_API_KEY)
+      .then(() => setMapsLoaded(true))
+      .catch(() => setLoadError(true));
   }, []);
 
-  // Update click handler when pinMode changes
   useEffect(() => {
-    const map = leafletMapRef.current;
-    if (!map) return;
+    if (!mapsLoaded || googleMapRef.current || !mapRef.current) return;
+    const { maps } = window.google;
+    const map = new maps.Map(mapRef.current, {
+      center: LICAB_CENTER,
+      zoom: 14,
+      styles: LIGHT_MAP_STYLES,
+      disableDefaultUI: false,
+      zoomControl: true,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      gestureHandling: "greedy",
+      zoomControlOptions: { position: maps.ControlPosition.RIGHT_BOTTOM },
+      fullscreenControlOptions: { position: maps.ControlPosition.RIGHT_TOP },
+    });
 
-    if (clickHandlerRef.current) {
-      map.off("click", clickHandlerRef.current);
-    }
-
-    const handler = (e) => {
-      const { lat, lng } = e.latlng;
-      if (
-        lat < LICAB_BOUNDS.minLat || lat > LICAB_BOUNDS.maxLat ||
-        lng < LICAB_BOUNDS.minLng || lng > LICAB_BOUNDS.maxLng
-      ) {
-        onMapClick({ outOfBounds: true });
+    map.addListener("click", (e) => {
+      if (!pinModeRef.current) return;
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      if (lat < LICAB_BOUNDS.minLat || lat > LICAB_BOUNDS.maxLat ||
+        lng < LICAB_BOUNDS.minLng || lng > LICAB_BOUNDS.maxLng) {
+        onMapClickRef.current({ outOfBounds: true });
         return;
       }
-      onMapClick({ lat, lng });
-    };
+      onMapClickRef.current({ lat, lng });
+    });
 
-    map.on("click", handler);
-    clickHandlerRef.current = handler;
-    map.getContainer().style.cursor = pinMode ? "crosshair" : "";
+    googleMapRef.current = map;
+  }, [mapsLoaded]);
 
-    return () => {
-      map.off("click", handler);
-    };
-  }, [pinMode, onMapClick]);
-
-  // Render report markers
   useEffect(() => {
-    const map = leafletMapRef.current;
-    if (!map) return;
+    if (!googleMapRef.current) return;
+    googleMapRef.current.setOptions({ draggableCursor: pinMode ? "crosshair" : "" });
+  }, [pinMode]);
 
-    // Remove old markers
-    markersRef.current.forEach((m) => m.remove());
+  useEffect(() => {
+    if (!mapsLoaded || !googleMapRef.current) return;
+    const { maps } = window.google;
+    markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
 
     const groups = groupReports(reports);
     groups.forEach((group) => {
-      const isSelected =
-        selectedGroup &&
+      const sev = group.topSeverity;
+      const color = severityColor(sev);
+      const isSelected = selectedGroup &&
         Math.abs(selectedGroup.lat - group.lat) < 0.001 &&
         Math.abs(selectedGroup.lng - group.lng) < 0.001;
+      const count = group.reports.length;
 
-      const marker = L.marker([group.lat, group.lng], {
-        icon: createPinIcon(group.topSeverity, group.reports.length),
-        zIndexOffset: isSelected ? 1000 : 0,
-      }).addTo(map);
+      const markerSvg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="-14 -18 28 36">
+          <circle r="14" fill="${color}" opacity="0.15"/>
+          <path d="M0,-18 C8,-18 14,-12 14,-5 C14,5 0,18 0,18 C0,18 -14,5 -14,-5 C-14,-12 -8,-18 0,-18 Z"
+                fill="${color}" stroke="white" stroke-width="1.5"/>
+          <circle cx="0" cy="-5" r="5" fill="white" opacity="0.95"/>
+          ${isSelected ? `<circle cx="0" cy="-5" r="7" fill="none" stroke="white" stroke-width="1" opacity="0.5"/>` : ""}
+        </svg>`;
 
-      marker.on("click", (e) => {
-        L.DomEvent.stopPropagation(e);
-        onPinClick(group);
+      const marker = new maps.Marker({
+        position: { lat: group.lat, lng: group.lng },
+        map: googleMapRef.current,
+        icon: {
+          url: `data:image/svg+xml,${encodeURIComponent(markerSvg)}`,
+          scaledSize: new maps.Size(28, 36),
+          anchor: new maps.Point(14, 36),
+        },
+        zIndex: isSelected ? 1000 : 1,
+        title: `${group.topSeverity} severity - ${count} report${count > 1 ? "s" : ""}`,
       });
 
-      // Pulse ring for selected
-      if (isSelected) {
-        const pulseIcon = L.divIcon({
-          className: "",
-          html: `<div style="
-            width:40px;height:40px;border-radius:50%;
-            border:2px solid ${severityColor(group.topSeverity)};
-            animation:leaflet-pulse 1.2s ease-out infinite;
-            opacity:0.6;margin:-6px 0 0 -6px;
-          "></div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
-        });
-        const pulse = L.marker([group.lat, group.lng], { icon: pulseIcon, interactive: false }).addTo(map);
-        markersRef.current.push(pulse);
-      }
-
+      marker.addListener("click", () => {
+        if (pinModeRef.current) return;
+        onPinClickRef.current(group);
+      });
       markersRef.current.push(marker);
     });
 
-    // Inject pulse animation once
-    if (!document.getElementById("leaflet-pulse-style")) {
+    if (!document.getElementById("gmaps-pulse-style")) {
       const s = document.createElement("style");
-      s.id = "leaflet-pulse-style";
-      s.textContent = `
-        @keyframes leaflet-pulse {
-          0% { transform: scale(1); opacity: 0.6; }
-          100% { transform: scale(2.5); opacity: 0; }
-        }
-      `;
+      s.id = "gmaps-pulse-style";
+      s.textContent = `@keyframes gmaps-pulse { 0%{transform:scale(1);opacity:0.7} 100%{transform:scale(2.5);opacity:0} }`;
       document.head.appendChild(s);
     }
-  }, [reports, selectedGroup, onPinClick]);
+  }, [reports, selectedGroup, mapsLoaded]);
 
-  // New pin preview marker
   useEffect(() => {
-    const map = leafletMapRef.current;
-    if (!map) return;
+    if (!mapsLoaded || !googleMapRef.current) return;
+    const { maps } = window.google;
+    if (newPinMarkerRef.current) { newPinMarkerRef.current.setMap(null); newPinMarkerRef.current = null; }
+    if (!newPin) return;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="-14 -18 28 36">
+      <path d="M0,-18 C8,-18 14,-12 14,-5 C14,5 0,18 0,18 C0,18 -14,5 -14,-5 C-14,-12 -8,-18 0,-18 Z"
+            fill="#2563eb" stroke="white" stroke-width="1.5" opacity="0.9"/>
+      <circle cx="0" cy="-5" r="5" fill="white" opacity="0.95"/>
+    </svg>`;
+    newPinMarkerRef.current = new maps.Marker({
+      position: { lat: newPin.lat, lng: newPin.lng },
+      map: googleMapRef.current,
+      icon: {
+        url: `data:image/svg+xml,${encodeURIComponent(svg)}`,
+        scaledSize: new maps.Size(28, 36),
+        anchor: new maps.Point(14, 36),
+      },
+    });
+  }, [newPin, mapsLoaded]);
 
-    if (newPinMarkerRef.current) {
-      newPinMarkerRef.current.remove();
-      newPinMarkerRef.current = null;
-    }
-
-    if (newPin) {
-      const icon = L.divIcon({
-        className: "",
-        html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="-14 -18 28 36">
-          <path d="M0,-18 C8,-18 14,-12 14,-5 C14,5 0,18 0,18 C0,18 -14,5 -14,-5 C-14,-12 -8,-18 0,-18 Z"
-                fill="#60a5fa" stroke="white" stroke-width="1.5" opacity="0.85"/>
-          <circle cx="0" cy="-5" r="5" fill="white" opacity="0.9"/>
-        </svg>`,
-        iconSize: [28, 36],
-        iconAnchor: [14, 36],
-      });
-      newPinMarkerRef.current = L.marker([newPin.lat, newPin.lng], { icon, interactive: false }).addTo(map);
-    }
-  }, [newPin]);
+  if (loadError) {
+    return (
+      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: COLORS.bg, gap: 12 }}>
+        <span style={{ fontSize: 40 }}>🗺️</span>
+        <p style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", maxWidth: 280, lineHeight: 1.6 }}>
+          Google Maps could not be loaded.<br />Please check your API key or network connection.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div
-      ref={mapRef}
-      style={{
-        width: "100%",
-        height: "100%",
-        minHeight: 520,
-        background: "#0d1929",
-      }}
-    />
+    <>
+      <div ref={mapRef} style={{ width: "100%", height: "100%", minHeight: 400 }} />
+      {!mapsLoaded && (
+        <div style={{ position: "absolute", inset: 0, background: COLORS.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, zIndex: 10 }}>
+          <div style={{ width: 32, height: 32, border: `3px solid ${COLORS.border}`, borderTopColor: COLORS.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          <span style={{ color: COLORS.textMuted, fontSize: 13 }}>Loading Google Maps…</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// COMPONENT: Stats Bar
+// ════════════════════════════════════════════════════════════════════════════
+function StatsBar({ reports }) {
+  const high = reports.filter(r => getSeverity(r.score) === "High").length;
+  const med = reports.filter(r => getSeverity(r.score) === "Medium").length;
+  const low = reports.filter(r => getSeverity(r.score) === "Low").length;
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      {[
+        { label: "High", count: high, color: COLORS.pin.high },
+        { label: "Med", count: med, color: COLORS.pin.medium },
+        { label: "Low", count: low, color: COLORS.pin.low },
+      ].map(({ label, count, color }) => (
+        <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 20, background: color + "18", border: `1px solid ${color}33` }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, boxShadow: `0 0 4px ${color}` }} />
+          <span style={{ fontSize: 11, color, fontWeight: 600 }}>{count} {label}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -573,95 +674,169 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState("All");
   const [toast, setToast] = useState("");
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [showPanel, setShowPanel] = useState(true);
+  const [pinGeoLoading, setPinGeoLoading] = useState(false);
 
-  const filteredReports =
-    filter === "All" ? reports : reports.filter((r) => r.type === filter);
-
-  const showToast = (msg) => {
+  const showToast = useCallback((msg) => {
     setToast(msg);
-    setTimeout(() => setToast(""), 3000);
-  };
+    setTimeout(() => setToast(""), 3200);
+  }, []);
 
-  const handleMapClick = ({ lat, lng, outOfBounds }) => {
-    if (!pinMode) return;
-    if (outOfBounds) {
-      showToast("⚠️ Please pin within the Licab municipality area.");
+  const handleUseCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      showToast("⚠️ Geolocation is not supported by your browser.");
       return;
     }
+    setPinGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if (lat < LICAB_BOUNDS.minLat || lat > LICAB_BOUNDS.maxLat ||
+          lng < LICAB_BOUNDS.minLng || lng > LICAB_BOUNDS.maxLng) {
+          setPinGeoLoading(false);
+          showToast("⚠️ Your location is outside the Licab municipality area.");
+          return;
+        }
+        setNewPin({ lat, lng });
+        setSelectedGroup(null);
+        setShowForm(true);
+        setPinMode(false);
+        setShowPanel(true);
+        setPinGeoLoading(false);
+      },
+      () => {
+        setPinGeoLoading(false);
+        showToast("⚠️ Could not get your location. Please allow location access.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [showToast]);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const filteredReports = filter === "All" ? reports : reports.filter((r) => r.type === filter);
+
+  const handleMapClick = useCallback(({ lat, lng, outOfBounds }) => {
+    if (!pinMode) return;
+    if (outOfBounds) { showToast("⚠️ Please pin within the Licab municipality area."); return; }
     setNewPin({ lat, lng });
+    setSelectedGroup(null);
     setShowForm(true);
     setPinMode(false);
-  };
+    setShowPanel(true);
+  }, [pinMode, showToast]);
 
-  const handlePinClick = (group) => {
+  const handlePinClick = useCallback((group) => {
     if (pinMode) return;
     setSelectedGroup(group);
     setShowForm(false);
-  };
+    setShowPanel(true);
+  }, [pinMode]);
+
+  const closePanel = () => { setSelectedGroup(null); setShowForm(false); setNewPin(null); setShowPanel(false); };
+
+  const sideOpen = showPanel && (selectedGroup || showForm);
 
   return (
-    <div style={styles.root}>
+    <div style={{
+      minHeight: "100vh", height: "100vh", width: "100vw",
+      background: COLORS.bg,
+      fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+      display: "flex", flexDirection: "column",
+      color: COLORS.text, overflow: "hidden",
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+    }}>
+      {/* Global CSS */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body, #root { width: 100% !important; height: 100% !important; margin: 0 !important; padding: 0 !important; background: ${COLORS.bg} !important; }
+        body { overflow: hidden !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes slideRight { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${COLORS.border}; border-radius: 10px; }
+        button:focus-visible { outline: 2px solid ${COLORS.accentLight}; outline-offset: 2px; }
+        input, textarea { box-sizing: border-box; font-family: inherit; }
+        button { font-family: inherit; }
+      `}</style>
+
       {/* ── Header ── */}
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <div style={styles.logo}>
-            <span style={styles.logoBadge}>LGU</span>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: 0.5, color: COLORS.text }}>
-                Licab InfraWatch
-              </div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted, letterSpacing: 1 }}>
-                NUEVA ECIJA · DAMAGE REPORTING SYSTEM
-              </div>
-            </div>
+      <header style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: isMobile ? "0 16px" : "0 24px",
+        height: isMobile ? "auto" : "60px",
+        minHeight: isMobile ? 56 : 60,
+        background: "#0f172a",
+        gap: 10, flexWrap: isMobile ? "wrap" : "nowrap",
+        zIndex: 1000, flexShrink: 0,
+        paddingTop: isMobile ? 10 : 0,
+        paddingBottom: isMobile ? 10 : 0,
+      }}>
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+            color: "white", fontWeight: 800, fontSize: 10, padding: "6px 10px",
+            borderRadius: 8, letterSpacing: 1.8,
+            border: "1px solid rgba(255,255,255,0.15)",
+          }}>LGU</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: isMobile ? 14 : 15, color: "white", lineHeight: 1.2, letterSpacing: -0.3 }}>Licab InfraWatch</div>
+            {!isMobile && <div style={{ fontSize: 10, color: "#64748b", letterSpacing: 1.4, textTransform: "uppercase", marginTop: 2 }}>Nueva Ecija · Damage Reporting</div>}
           </div>
         </div>
-        <div style={styles.headerRight}>
-          <div style={styles.filterRow}>
+
+        {/* Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: "wrap", flex: isMobile ? "1 1 100%" : "0 0 auto", justifyContent: isMobile ? "space-between" : "flex-end" }}>
+          {/* Stats */}
+          {!isMobile && <StatsBar reports={filteredReports} />}
+
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,0.07)", borderRadius: 10, padding: 3, border: "1px solid rgba(255,255,255,0.1)" }}>
             {["All", ...INFRA_TYPES].map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                style={{
-                  ...styles.filterBtn,
-                  background: filter === f ? COLORS.accent : "transparent",
-                  color: filter === f ? "white" : COLORS.textMuted,
-                  border: `1px solid ${filter === f ? COLORS.accentLight : COLORS.border}`,
-                }}
-              >
-                {f}
-              </button>
+              <button key={f} onClick={() => setFilter(f)} style={{
+                padding: isMobile ? "5px 10px" : "5px 13px",
+                borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                letterSpacing: 0.2, transition: "all 0.15s", border: "none",
+                background: filter === f ? "#3b82f6" : "transparent",
+                color: filter === f ? "white" : "#94a3b8",
+                boxShadow: filter === f ? "0 1px 6px rgba(59,130,246,0.4)" : "none",
+              }}>{f}</button>
             ))}
           </div>
+
+          {/* Report button */}
           <button
-            onClick={() => {
-              setPinMode((p) => !p);
-              setSelectedGroup(null);
-              setShowForm(false);
-            }}
+            onClick={() => { setPinMode(p => !p); setSelectedGroup(null); setShowForm(false); }}
             style={{
-              ...styles.reportBtn,
-              background: pinMode ? COLORS.danger : COLORS.accent,
-              boxShadow: pinMode
-                ? `0 0 18px ${COLORS.danger}66`
-                : `0 0 18px ${COLORS.accentGlow}`,
-            }}
-          >
-            {pinMode ? "✕ Cancel" : "+ Report Damage"}
+              padding: isMobile ? "8px 14px" : "8px 18px",
+              borderRadius: 9, border: "none", color: "white",
+              fontWeight: 600, fontSize: isMobile ? 12 : 13, cursor: "pointer",
+              letterSpacing: 0.3, transition: "all 0.2s", whiteSpace: "nowrap",
+              background: pinMode ? "#dc2626" : "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+              boxShadow: pinMode ? "0 4px 14px rgba(220,38,38,0.4)" : "0 4px 14px rgba(29,78,216,0.35)",
+            }}>
+            {pinMode ? "✕ Cancel" : (isMobile ? "+ Report" : "+ Report Damage")}
           </button>
         </div>
       </header>
 
       {/* ── Body ── */}
-      <div style={styles.body}>
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         {/* Map */}
-        <div
-          style={{
-            ...styles.mapWrap,
-            cursor: pinMode ? "crosshair" : "default",
-          }}
-        >
-          <LeafletMap
+        <div style={{ flex: 1, position: "relative" }}>
+          <GoogleMap
             reports={filteredReports}
             pinMode={pinMode}
             onMapClick={handleMapClick}
@@ -672,311 +847,190 @@ export default function App() {
 
           {/* Pin mode banner */}
           {pinMode && (
-            <div style={styles.pinBanner}>
-              📍 Click on the map to pin the exact location of the damage
+            <div style={{
+              position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+              background: "#0f172a", color: "white", padding: "10px 16px 10px 20px",
+              borderRadius: 24, fontSize: 13, fontWeight: 600, zIndex: 900,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.25)", whiteSpace: "nowrap",
+              animation: "fadeUp 0.3s ease",
+              display: "flex", alignItems: "center", gap: 10,
+              border: "1px solid rgba(59,130,246,0.4)",
+            }}>
+              <span style={{ animation: "spin 2s linear infinite", display: "inline-block", fontSize: 16, pointerEvents: "none" }}>📍</span>
+              <span style={{ pointerEvents: "none" }}>Click the map to pin the damage location</span>
+              <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", flexShrink: 0 }} />
+              <button
+                onClick={handleUseCurrentLocation}
+                disabled={pinGeoLoading}
+                style={{
+                  background: pinGeoLoading ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.85)",
+                  color: "white", border: "none", borderRadius: 14,
+                  padding: "5px 12px", fontSize: 11, fontWeight: 700,
+                  cursor: pinGeoLoading ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 5,
+                  letterSpacing: 0.3, whiteSpace: "nowrap",
+                  transition: "background 0.15s",
+                  flexShrink: 0,
+                }}>
+                {pinGeoLoading
+                  ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span> Locating…</>
+                  : <><span>📡</span> Use Current Location</>
+                }
+              </button>
             </div>
           )}
 
-          {/* Map attribution badge */}
-          <div style={styles.mapBadge}>
-            🗺️ OpenStreetMap
+          {/* Mobile: Show panel toggle */}
+          {isMobile && sideOpen && (
+            <button onClick={() => setShowPanel(p => !p)} style={{
+              position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+              background: COLORS.accent, color: "white", border: "none",
+              padding: "8px 22px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+              cursor: "pointer", zIndex: 900, boxShadow: `0 4px 16px ${COLORS.accentGlow}`,
+            }}>
+              {showPanel ? "⬇ Hide Details" : "⬆ Show Details"}
+            </button>
+          )}
+
+          {/* Map badge */}
+          <div style={{
+            position: "absolute", bottom: 6, left: 8,
+            background: "rgba(255,255,255,0.85)", color: COLORS.textMuted,
+            fontSize: 10, padding: "3px 8px", borderRadius: 6,
+            pointerEvents: "none", zIndex: 900, border: `1px solid ${COLORS.border}`,
+            backdropFilter: "blur(4px)",
+          }}>
+            🗺️ Google Maps
           </div>
         </div>
 
         {/* Side Panel */}
-        {selectedGroup && !showForm && (
-          <ReportPanel group={selectedGroup} onClose={() => setSelectedGroup(null)} />
-        )}
-        {showForm && newPin && (
-          <SubmitForm
-            pin={newPin}
-            onClose={() => { setShowForm(false); setNewPin(null); }}
-            onSubmitted={() => {
-              setShowForm(false);
-              setNewPin(null);
-              showToast("✅ Report submitted for admin review!");
-            }}
-          />
+        {sideOpen && (
+          <div style={isMobile ? {
+            position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 950,
+            maxHeight: showPanel ? "72vh" : 0,
+            overflow: "hidden",
+            transition: "max-height 0.3s ease",
+          } : {
+            animation: "slideRight 0.22s ease",
+            height: "100%",
+          }}>
+            {selectedGroup && !showForm && (
+              <ReportPanel group={selectedGroup} onClose={closePanel} isMobile={isMobile} />
+            )}
+            {showForm && newPin && (
+              <SubmitForm pin={newPin} onClose={closePanel} isMobile={isMobile}
+                onSubmitted={() => { closePanel(); showToast("✅ Report submitted for admin review!"); }} />
+            )}
+          </div>
         )}
       </div>
 
-      {/* ── Legend ── */}
-      <div style={styles.legend}>
-        {["High", "Medium", "Low"].map((s) => (
-          <div key={s} style={styles.legendItem}>
-            <div style={{ width: 10, height: 10, borderRadius: "50%", background: severityColor(s) }} />
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>{s} Severity</span>
+      {/* ── Legend (desktop bottom bar) ── */}
+      {!isMobile && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 18,
+          padding: "8px 24px", background: "#0f172a",
+          flexWrap: "wrap", flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 10, color: "#475569", fontWeight: 700, letterSpacing: 1.4, textTransform: "uppercase" }}>Legend</span>
+          {["High", "Medium", "Low"].map((s) => (
+            <div key={s} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: severityColor(s), boxShadow: `0 0 6px ${severityColor(s)}88` }} />
+              <span style={{ fontSize: 11, color: "#64748b" }}>{s} Severity</span>
+            </div>
+          ))}
+          <div style={{ width: 1, height: 14, background: "#1e293b" }} />
+          {INFRA_TYPES.map(t => (
+            <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ fontSize: 12 }}>{typeIcon(t)}</span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>{t}</span>
+            </div>
+          ))}
+          <div style={{ marginLeft: "auto", fontSize: 11, color: "#475569" }}>
+            <span style={{ color: "#3b82f6", fontWeight: 700 }}>{reports.length}</span> approved reports · Licab, Nueva Ecija
           </div>
-        ))}
-        <div style={{ width: 1, background: COLORS.border, margin: "0 8px" }} />
-        <div style={styles.legendItem}>
-          <span style={{ fontSize: 12, color: COLORS.textMuted }}>
-            {reports.length} Approved Reports
-          </span>
         </div>
-      </div>
+      )}
 
       {/* ── Toast ── */}
-      {toast && <div style={styles.toast}>{toast}</div>}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 70, left: "50%", transform: "translateX(-50%)",
+          background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+          color: COLORS.text, padding: "10px 24px", borderRadius: 24,
+          fontSize: 13, fontWeight: 600, boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+          zIndex: 9999, animation: "fadeUp 0.2s ease", whiteSpace: "nowrap",
+        }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
-const styles = {
-  root: {
-    minHeight: "100vh",
-    background: COLORS.bg,
-    fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
+// ── Panel Styles ─────────────────────────────────────────────────────────────
+const getPanelWrapStyle = (isMobile) => ({
+  position: isMobile ? "fixed" : "absolute",
+  bottom: isMobile ? 0 : "auto",
+  right: isMobile ? 0 : 0,
+  top: isMobile ? "auto" : 0,
+  left: isMobile ? 0 : "auto",
+  width: isMobile ? "100%" : 380,
+  minWidth: isMobile ? "100%" : 340,
+  maxHeight: isMobile ? "88vh" : "100%",
+  background: COLORS.surface,
+  borderLeft: isMobile ? "none" : `1px solid ${COLORS.border}`,
+  borderTop: isMobile ? `1px solid ${COLORS.border}` : "none",
+  borderRadius: isMobile ? "24px 24px 0 0" : "0",
+  display: "flex",
+  flexDirection: "column",
+  boxShadow: isMobile ? "0 -4px 24px rgba(0,0,0,0.1)" : "-4px 0 24px rgba(0,0,0,0.06)",
+  zIndex: 500,
+  animation: isMobile ? "slideUp 0.25s ease-out" : "slideRight 0.25s ease-out",
+});
+
+const panelStyles = {
+  wrap: {
+    width: 380,
+    minWidth: 340,
+    background: COLORS.surface,
+    borderLeft: `1px solid ${COLORS.border}`,
     display: "flex",
     flexDirection: "column",
-    color: COLORS.text,
+    height: "100%",
+    boxShadow: "-4px 0 24px rgba(0,0,0,0.06)",
   },
   header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "12px 24px",
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0,
     background: COLORS.surface,
-    borderBottom: `1px solid ${COLORS.border}`,
-    gap: 12,
-    flexWrap: "wrap",
-    zIndex: 1000,
-    position: "relative",
-  },
-  headerLeft: { display: "flex", alignItems: "center" },
-  logo: { display: "flex", alignItems: "center", gap: 12 },
-  logoBadge: {
-    background: COLORS.accent,
-    color: "white",
-    fontWeight: 900,
-    fontSize: 13,
-    padding: "4px 8px",
-    borderRadius: 6,
-    letterSpacing: 1,
-  },
-  headerRight: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
-  filterRow: { display: "flex", gap: 6 },
-  filterBtn: {
-    padding: "5px 12px",
-    borderRadius: 6,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    letterSpacing: 0.5,
-    transition: "all 0.15s",
-  },
-  reportBtn: {
-    padding: "8px 18px",
-    borderRadius: 8,
-    border: "none",
-    color: "white",
-    fontWeight: 700,
-    fontSize: 13,
-    cursor: "pointer",
-    letterSpacing: 0.5,
-    transition: "all 0.2s",
-  },
-  body: {
-    flex: 1,
-    display: "flex",
-    gap: 0,
-    overflow: "hidden",
-    position: "relative",
-  },
-  mapWrap: {
-    flex: 1,
-    position: "relative",
-    background: "#0d1929",
-    minHeight: 520,
-  },
-  pinBanner: {
-    position: "absolute",
-    top: 16,
-    left: "50%",
-    transform: "translateX(-50%)",
-    background: COLORS.accent,
-    color: "white",
-    padding: "8px 20px",
-    borderRadius: 20,
-    fontSize: 13,
-    fontWeight: 600,
-    pointerEvents: "none",
-    boxShadow: `0 4px 20px ${COLORS.accentGlow}`,
-    whiteSpace: "nowrap",
-    zIndex: 900,
-  },
-  mapBadge: {
-    position: "absolute",
-    bottom: 32,
-    right: 10,
-    background: "rgba(11,17,32,0.75)",
-    color: COLORS.textMuted,
-    fontSize: 10,
-    padding: "3px 8px",
-    borderRadius: 6,
-    pointerEvents: "none",
-    zIndex: 900,
-    border: `1px solid ${COLORS.border}`,
-  },
-  panel: {
-    width: 340,
-    background: COLORS.surface,
-    borderLeft: `1px solid ${COLORS.border}`,
-    display: "flex",
-    flexDirection: "column",
-    animation: "slideIn 0.2s ease",
-    zIndex: 800,
-  },
-  formWrap: {
-    width: 340,
-    background: COLORS.surface,
-    borderLeft: `1px solid ${COLORS.border}`,
-    display: "flex",
-    flexDirection: "column",
-    animation: "slideIn 0.2s ease",
-    zIndex: 800,
-  },
-  panelHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "14px 16px",
-    borderBottom: `1px solid ${COLORS.border}`,
   },
   closeBtn: {
-    background: "transparent",
-    border: "none",
-    color: COLORS.textMuted,
-    cursor: "pointer",
-    fontSize: 14,
-    padding: "2px 6px",
-    borderRadius: 4,
-  },
-  reportCard: {
-    padding: "12px 16px",
-    borderBottom: `1px solid ${COLORS.border}`,
-    marginLeft: 0,
-    transition: "background 0.15s",
-  },
-  reportCardTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  badge: {
-    fontSize: 11,
-    fontWeight: 700,
-    padding: "2px 8px",
-    borderRadius: 20,
-    letterSpacing: 0.5,
-  },
-  formGroup: { padding: "12px 16px 0" },
-  label: {
-    display: "block",
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: 1,
-    color: COLORS.textMuted,
-    marginBottom: 6,
-    textTransform: "uppercase",
-  },
-  input: {
-    width: "100%",
-    background: COLORS.surfaceHigh,
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 8,
-    color: COLORS.text,
-    padding: "9px 12px",
-    fontSize: 13,
-    boxSizing: "border-box",
-    outline: "none",
-  },
-  typeBtn: {
-    flex: 1,
-    padding: "7px 4px",
-    borderRadius: 7,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    letterSpacing: 0.3,
+    background: COLORS.surfaceHigh, border: `1px solid ${COLORS.border}`,
+    color: COLORS.textMuted, cursor: "pointer", padding: "7px", borderRadius: 8,
+    display: "flex", alignItems: "center", justifyContent: "center",
     transition: "all 0.15s",
   },
-  checkGrid: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    background: COLORS.surfaceHigh,
-    borderRadius: 8,
-    border: `1px solid ${COLORS.border}`,
-    padding: 10,
+  card: {
+    padding: "16px 20px", borderBottom: `1px solid ${COLORS.border}`,
+    transition: "background 0.15s",
   },
-  checkItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    cursor: "pointer",
-    padding: "3px 0",
+  cardTop: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8,
   },
-  severityBar: {
-    display: "flex",
-    alignItems: "center",
-    marginTop: 8,
-    padding: "6px 10px",
-    background: COLORS.bg,
-    borderRadius: 7,
+  section: { padding: "14px 20px 0" },
+  label: {
+    display: "block", fontSize: 10, fontWeight: 700, letterSpacing: 1.4,
+    color: COLORS.textMuted, marginBottom: 8, textTransform: "uppercase",
   },
-  dropzone: {
-    border: `1.5px dashed ${COLORS.border}`,
-    borderRadius: 8,
-    padding: "16px",
-    textAlign: "center",
-    cursor: "pointer",
-    transition: "border-color 0.15s",
-    background: COLORS.surfaceHigh,
+  input: {
+    width: "100%", background: COLORS.surfaceHigh, border: `1.5px solid ${COLORS.border}`,
+    borderRadius: 10, color: COLORS.text, padding: "10px 14px",
+    fontSize: 13, outline: "none", transition: "border-color 0.15s",
   },
-  submitBtn: {
-    margin: "16px",
-    padding: "11px",
-    borderRadius: 8,
-    border: "none",
-    background: COLORS.accent,
-    color: "white",
-    fontWeight: 700,
-    fontSize: 14,
-    letterSpacing: 0.5,
-    boxShadow: `0 4px 14px ${COLORS.accentGlow}`,
-    transition: "all 0.2s",
-    width: "calc(100% - 32px)",
-  },
-  legend: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-    padding: "10px 24px",
-    background: COLORS.surface,
-    borderTop: `1px solid ${COLORS.border}`,
-    flexWrap: "wrap",
-    zIndex: 1000,
-    position: "relative",
-  },
-  legendItem: { display: "flex", alignItems: "center", gap: 6 },
-  toast: {
-    position: "fixed",
-    bottom: 60,
-    left: "50%",
-    transform: "translateX(-50%)",
-    background: "#1e293b",
-    border: `1px solid ${COLORS.border}`,
-    color: COLORS.text,
-    padding: "10px 24px",
-    borderRadius: 24,
-    fontSize: 13,
-    fontWeight: 600,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-    zIndex: 9999,
-    animation: "fadeIn 0.2s ease",
-    whiteSpace: "nowrap",
+  infoBox: {
+    background: COLORS.surfaceHigh, border: `1.5px solid ${COLORS.border}`,
+    borderRadius: 12, padding: "14px 16px",
   },
 };
