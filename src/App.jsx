@@ -1,4 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// ── Supabase Client ─────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://afvhvhnzmrcykpqlmqnr.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_b5qxLBFPNW64wwYfCuoalA_oAUo3Viu"; // replace with your sb_publishable_... key
+const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyAd2kPUWd-cMhs2r4ScEFZDtHuvGQgSZbY";
 
@@ -64,15 +70,6 @@ const severityColor = (s) =>
   s === "High" ? COLORS.pin.high : s === "Medium" ? COLORS.pin.medium : COLORS.pin.low;
 const severityIcon = (s) => (s === "High" ? "🔴" : s === "Medium" ? "🟡" : "🟢");
 const typeIcon = (t) => (t === "Road" ? "🛣️" : t === "Bridge" ? "🌉" : "🏛️");
-
-// Mock approved reports — added placeName field
-const MOCK_REPORTS = [
-  { id: 1, lat: 15.642, lng: 120.81, type: "Road", score: 12, placeName: "Brgy. Cuyapo Road, Licab", desc: "Large potholes and complete surface failure along the main highway.", date: "2025-04-10", photo: null },
-  { id: 2, lat: 15.635, lng: 120.798, type: "Bridge", score: 6, placeName: "Barangay Bridge, Licab", desc: "Visible deck cracks and corroding railings on the barangay bridge.", date: "2025-04-08", photo: null },
-  { id: 3, lat: 15.642, lng: 120.81, type: "Public Building", score: 2, placeName: "Covered Court, Licab", desc: "Hairline wall cracks in the covered court.", date: "2025-04-07", photo: null },
-  { id: 4, lat: 15.628, lng: 120.815, type: "Road", score: 5, placeName: "Public Market Area, Licab", desc: "Multiple potholes and drainage problems near the market area.", date: "2025-04-05", photo: null },
-  { id: 5, lat: 15.652, lng: 120.802, type: "Bridge", score: 13, placeName: "North Sitio Bridge, Licab", desc: "Foundation displacement and exposed rebar on bridge near north sitio.", date: "2025-04-03", photo: null },
-];
 
 const groupReports = (reports) => {
   const groups = [];
@@ -196,10 +193,11 @@ function ReportPanel({ group, onClose, isMobile }) {
 function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
   const [type, setType] = useState("");
   const [checks, setChecks] = useState({});
-  const [manualSeverity, setManualSeverity] = useState("");
   const [desc, setDesc] = useState("");
   const [photoName, setPhotoName] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [respondentName, setRespondentName] = useState("");
   const [locationName, setLocationName] = useState("");
   const [locationLoading, setLocationLoading] = useState(true);
@@ -248,14 +246,13 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
     }
     setGeoLoading(true);
     setGeoError("");
-    // Show "locating" state but don't update locationName yet
-    setLocationLoading(false); // keep existing name visible while searching
+    setLocationLoading(false);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setActivePin({ lat, lng });
-        setLocationLoading(true); // now resolving new location name
+        setLocationLoading(true);
         reverseGeocode(lat, lng, () => { setLocationLoading(false); setGeoLoading(false); });
       },
       () => {
@@ -271,10 +268,57 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
   const severity = type && score > 0 ? getSeverity(score) : null;
   const toggle = (id) => setChecks((p) => ({ ...p, [id]: !p[id] }));
 
-  const handleSubmit = () => {
-    if (!type || !desc.trim() || !manualSeverity) return;
-    setSubmitted(true);
-    setTimeout(() => onSubmitted(), 2200);
+  // ── Supabase submit ──────────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    if (!type || !desc.trim()) return;
+    setSubmitting(true);
+    setSubmitError("");
+
+    try {
+      let photo_url = null;
+
+      // Upload photo to Supabase Storage if one was selected
+      const file = fileRef.current?.files?.[0];
+      if (file) {
+        const ext = file.name.split(".").pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("report-photos")
+          .upload(fileName, file, { contentType: file.type });
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from("report-photos")
+          .getPublicUrl(fileName);
+
+        photo_url = urlData.publicUrl;
+      }
+
+      // Insert report — status defaults to 'pending' via DB default
+      const { error: insertError } = await supabase.from("reports").insert({
+        lat: activePin.lat,
+        lng: activePin.lng,
+        type,
+        score,
+        severity: severity || "Low",
+        place_name: locationName || null,
+        description: desc,
+        respondent: respondentName || null,
+        checks,
+        photo_url,
+      });
+
+      if (insertError) throw insertError;
+
+      setSubmitted(true);
+      setTimeout(() => onSubmitted(), 2200);
+    } catch (err) {
+      console.error("Submit failed:", err.message);
+      setSubmitError("Submission failed. Please try again.");
+      setSubmitting(false);
+    }
   };
 
   if (submitted) {
@@ -291,7 +335,7 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
     );
   }
 
-  const canSubmit = type && desc.trim() && manualSeverity;
+  const canSubmit = type && desc.trim() && !submitting;
 
   return (
     <aside style={getPanelWrapStyle(isMobile)}>
@@ -384,32 +428,6 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
           </div>
         </div>
 
-        {/* Damage Level */}
-        <div style={panelStyles.section}>
-          <label style={panelStyles.label}>Damage Level <span style={{ color: COLORS.danger }}>*</span></label>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[
-              { value: "High", icon: "🔴", color: COLORS.pin.high },
-              { value: "Medium", icon: "🟡", color: COLORS.pin.medium },
-              { value: "Low", icon: "🟢", color: COLORS.pin.low },
-            ].map(({ value, icon, color }) => (
-              <button key={value} onClick={() => setManualSeverity(value)}
-                style={{
-                  flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 11, fontWeight: 700,
-                  cursor: "pointer", letterSpacing: 0.5, transition: "all 0.15s",
-                  background: manualSeverity === value ? color + "18" : COLORS.surfaceHigh,
-                  border: `1.5px solid ${manualSeverity === value ? color : COLORS.border}`,
-                  color: manualSeverity === value ? color : COLORS.textDim,
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                  boxShadow: manualSeverity === value ? `0 0 10px ${color}33` : "none",
-                }}>
-                <span style={{ fontSize: 18 }}>{icon}</span>
-                <span>{value}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Checklist */}
         {type && (
           <div style={panelStyles.section}>
@@ -465,6 +483,13 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
           </div>
         </div>
 
+        {/* Error message */}
+        {submitError && (
+          <div style={{ margin: "8px 20px 0", padding: "10px 14px", background: COLORS.danger + "10", border: `1px solid ${COLORS.danger}44`, borderRadius: 8, fontSize: 12, color: COLORS.danger, fontWeight: 600 }}>
+            ⚠️ {submitError}
+          </div>
+        )}
+
         <div style={{ padding: isMobile ? "12px 16px 32px" : "12px 16px 20px", flexShrink: 0 }}>
           <button onClick={handleSubmit} disabled={!canSubmit}
             style={{
@@ -474,8 +499,12 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
               fontWeight: 700, fontSize: 14, letterSpacing: 0.5,
               boxShadow: canSubmit ? `0 4px 18px ${COLORS.accentGlow}` : "none",
               transition: "all 0.2s", cursor: canSubmit ? "pointer" : "not-allowed",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
             }}>
-            {canSubmit ? "🚀 Submit Report" : "Complete all required fields"}
+            {submitting
+              ? <><span style={{ animation: "spin 0.8s linear infinite", display: "inline-block" }}>⏳</span> Submitting…</>
+              : canSubmit ? "🚀 Submit Report" : "Complete all required fields"
+            }
           </button>
         </div>
       </div>
@@ -667,7 +696,43 @@ function StatsBar({ reports }) {
 // MAIN APP
 // ════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [reports] = useState(MOCK_REPORTS);
+  // ── Fetch approved reports from Supabase ──────────────────────────────────
+  const [reports, setReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchReports() {
+      const { data, error } = await supabase
+        .from("reports")
+        .select("id, lat, lng, type, score, severity, place_name, description, photo_url, created_at")
+        .eq("status", "approved")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching reports:", error);
+        setReportsLoading(false);
+        return;
+      }
+
+      setReports(
+        data.map((r) => ({
+          id: r.id,
+          lat: r.lat,
+          lng: r.lng,
+          type: r.type,
+          score: r.score,
+          placeName: r.place_name,
+          desc: r.description,
+          photo: r.photo_url,
+          date: r.created_at?.slice(0, 10),
+        }))
+      );
+      setReportsLoading(false);
+    }
+
+    fetchReports();
+  }, []);
+
   const [pinMode, setPinMode] = useState(false);
   const [newPin, setNewPin] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
@@ -836,6 +901,20 @@ export default function App() {
       <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         {/* Map */}
         <div style={{ flex: 1, position: "relative" }}>
+          {/* Loading overlay */}
+          {reportsLoading && (
+            <div style={{
+              position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+              background: "#0f172a", color: "white", padding: "8px 18px",
+              borderRadius: 20, fontSize: 12, fontWeight: 600, zIndex: 900,
+              display: "flex", alignItems: "center", gap: 8,
+              boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+            }}>
+              <span style={{ animation: "spin 0.8s linear infinite", display: "inline-block" }}>⏳</span>
+              Loading reports…
+            </div>
+          )}
+
           <GoogleMap
             reports={filteredReports}
             pinMode={pinMode}
