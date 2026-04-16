@@ -31,9 +31,15 @@ const COLORS = {
   pin: { high: "#dc2626", medium: "#d97706", low: "#059669" },
 };
 
-const LICAB_CENTER = { lat: 15.6394, lng: 120.8064 };
-// Tight bounds: barangays around Licab only, excludes clicking on the town center label area
-const LICAB_BOUNDS = { minLat: 15.605, maxLat: 15.685, minLng: 120.768, maxLng: 120.848 };
+const LICAB_CENTER = { lat: 15.55, lng: 120.7667 };
+
+// Adjusted bounds to properly cover Licab municipality
+const LICAB_BOUNDS = {
+  minLat: 15.51,
+  maxLat: 15.59,
+  minLng: 120.73,
+  maxLng: 120.80
+};
 
 // Map zoom — zoomed in so only Licab is visible
 const LICAB_ZOOM = 14;
@@ -599,6 +605,207 @@ function SubmitForm({ pin, onClose, onSubmitted, isMobile }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// COMPONENT: Reports Drawer (left sidebar)
+// ════════════════════════════════════════════════════════════════════════════
+function ReportsDrawer({ reports, open, onToggle, onSelectReport, isMobile }) {
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("All");
+  const [sevFilter, setSevFilter] = useState("All");
+
+  const filtered = reports.filter((r) => {
+    const matchType = typeFilter === "All" || r.type === typeFilter;
+    const matchSev = sevFilter === "All" || getSeverity(r.score) === sevFilter;
+    const q = search.toLowerCase();
+    const matchSearch =
+      !q ||
+      r.type?.toLowerCase().includes(q) ||
+      r.placeName?.toLowerCase().includes(q) ||
+      r.desc?.toLowerCase().includes(q) ||
+      r.respondent?.toLowerCase().includes(q);
+    return matchType && matchSev && matchSearch;
+  });
+
+  const drawerWidth = isMobile ? "100vw" : 360;
+
+  return (
+    <>
+      {/* Toggle tab button */}
+      <button
+        onClick={onToggle}
+        title={open ? "Close reports list" : "View approved reports"}
+        style={{
+          position: "absolute",
+          top: "50%",
+          left: open ? (isMobile ? "100vw" : drawerWidth) : 0,
+          transform: open ? "translateY(-50%) translateX(-1px)" : "translateY(-50%)",
+          zIndex: 800,
+          background: COLORS.accent,
+          color: "white",
+          border: "none",
+          borderRadius: open ? "0 10px 10px 0" : "0 10px 10px 0",
+          width: 28,
+          height: 72,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: `2px 0 14px ${COLORS.accentGlow}`,
+          transition: "left 0.3s ease",
+          flexShrink: 0,
+          writingMode: "vertical-rl",
+          fontSize: 11,
+          fontWeight: 800,
+          letterSpacing: 1.2,
+          gap: 0,
+          padding: 0,
+        }}
+        aria-label={open ? "Close reports list" : "Open reports list"}
+      >
+        {open ? "◀" : "▶"}
+      </button>
+
+      {/* Drawer panel */}
+      <div style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: drawerWidth,
+        maxWidth: "100vw",
+        background: COLORS.surface,
+        borderRight: `1px solid ${COLORS.border}`,
+        display: "flex",
+        flexDirection: "column",
+        zIndex: 790,
+        boxShadow: open ? "4px 0 32px rgba(15,23,42,0.10)" : "none",
+        transform: open ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
+        overflow: "hidden",
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: "16px 18px 12px",
+          borderBottom: `1px solid ${COLORS.border}`,
+          background: "linear-gradient(135deg, #f7f9fd 0%, #ffffff 100%)",
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 16 }}>📋</span>
+              <span style={{ fontWeight: 800, fontSize: 14, color: COLORS.text }}>Approved Reports</span>
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20,
+                background: COLORS.accentSoft, color: COLORS.accent, border: `1px solid ${COLORS.accent}30`,
+              }}>{filtered.length}</span>
+            </div>
+            <button onClick={onToggle} style={{ ...panelStyles.closeBtn }} aria-label="Close drawer">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <path d="M1 1L13 13M13 1L1 13" stroke={COLORS.textMuted} strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Search */}
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="🔍  Search by place, type, description…"
+            style={{
+              ...panelStyles.input,
+              fontSize: 12,
+              padding: "10px 14px",
+              marginBottom: 8,
+            }}
+          />
+
+          {/* Filter chips */}
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {/* Type chips */}
+            {["All", ...INFRA_TYPES].map((t) => (
+              <button key={t} onClick={() => setTypeFilter(t)} style={{
+                padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                cursor: "pointer", border: "none", transition: "all 0.15s",
+                background: typeFilter === t ? COLORS.accent : COLORS.surfaceMid,
+                color: typeFilter === t ? "white" : COLORS.textMuted,
+              }}>{t === "All" ? "All Types" : t}</button>
+            ))}
+            <div style={{ width: 1, background: COLORS.border, margin: "2px 2px" }} />
+            {/* Severity chips */}
+            {["All", "High", "Medium", "Low"].map((s) => (
+              <button key={s} onClick={() => setSevFilter(s)} style={{
+                padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+                cursor: "pointer", border: "none", transition: "all 0.15s",
+                background: sevFilter === s
+                  ? (s === "All" ? COLORS.accent : severityColor(s))
+                  : COLORS.surfaceMid,
+                color: sevFilter === s ? "white" : COLORS.textMuted,
+              }}>{s === "All" ? "All Severity" : s}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* List */}
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          {filtered.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 24px", gap: 10 }}>
+              <span style={{ fontSize: 36 }}>🔍</span>
+              <span style={{ color: COLORS.textMuted, fontSize: 13, textAlign: "center", lineHeight: 1.6 }}>No reports match your filters.</span>
+            </div>
+          ) : (
+            filtered.map((r) => {
+              const sev = getSeverity(r.score);
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => onSelectReport(r)}
+                  style={{
+                    width: "100%", textAlign: "left", background: "transparent",
+                    border: "none", borderBottom: `1px solid ${COLORS.border}`,
+                    borderLeft: `3px solid ${severityColor(sev)}`,
+                    padding: "14px 16px", cursor: "pointer",
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = COLORS.surfaceHigh}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 15 }}>{typeIcon(r.type)}</span>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: COLORS.text }}>{r.type}</span>
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
+                      background: severityColor(sev) + "15", color: severityColor(sev),
+                      border: `1px solid ${severityColor(sev)}40`,
+                    }}>{severityIcon(sev)} {sev}</span>
+                  </div>
+                  {r.placeName && (
+                    <div style={{ fontSize: 12, color: COLORS.accent, fontWeight: 600, marginBottom: 4 }}>
+                      📍 {r.placeName}
+                    </div>
+                  )}
+                  <div style={{
+                    fontSize: 12, color: COLORS.textMuted, lineHeight: 1.5,
+                    overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                  }}>{r.desc}</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>📅 {r.date}</span>
+                    {r.respondent && (
+                      <span style={{ fontSize: 11, color: COLORS.textMuted }}>👤 {r.respondent}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // COMPONENT: Google Map
 // ════════════════════════════════════════════════════════════════════════════
 function GoogleMap({ reports, pinMode, onMapClick, onPinClick, newPin, selectedGroup }) {
@@ -853,6 +1060,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [showPanel, setShowPanel] = useState(true);
   const [pinGeoLoading, setPinGeoLoading] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -916,6 +1124,14 @@ export default function App() {
   }, [pinMode]);
 
   const closePanel = () => { setSelectedGroup(null); setShowForm(false); setNewPin(null); setShowPanel(false); };
+
+  const handleSelectFromDrawer = useCallback((r) => {
+    const group = { lat: r.lat, lng: r.lng, topSeverity: getSeverity(r.score), reports: [r] };
+    setSelectedGroup(group);
+    setShowForm(false);
+    setShowPanel(true);
+    setDrawerOpen(false);
+  }, []);
 
   const sideOpen = showPanel && (selectedGroup || showForm);
 
@@ -994,6 +1210,23 @@ export default function App() {
             ))}
           </div>
 
+          {/* Reports Drawer toggle */}
+          <button
+            onClick={() => setDrawerOpen(d => !d)}
+            style={{
+              padding: isMobile ? "10px 14px" : "11px 20px",
+              borderRadius: 12, border: `1.5px solid ${COLORS.border}`,
+              color: drawerOpen ? COLORS.accent : COLORS.textDim,
+              fontWeight: 700, fontSize: isMobile ? 13 : 14, cursor: "pointer",
+              letterSpacing: 0.3, transition: "all 0.2s", whiteSpace: "nowrap",
+              background: drawerOpen ? COLORS.accentSoft : COLORS.surface,
+              boxShadow: drawerOpen ? `0 4px 18px ${COLORS.accentGlow}` : "0 1px 4px rgba(15,23,42,0.06)",
+              display: "flex", alignItems: "center", gap: 6,
+            }}>
+            <span style={{ fontSize: 14 }}>📋</span>
+            {isMobile ? "List" : "Reports List"}
+          </button>
+
           {/* Report button */}
           <button
             onClick={() => { setPinMode(p => !p); setSelectedGroup(null); setShowForm(false); }}
@@ -1014,6 +1247,14 @@ export default function App() {
       <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         {/* Map */}
         <div style={{ flex: 1, position: "relative" }}>
+          {/* Reports Drawer */}
+          <ReportsDrawer
+            reports={filteredReports}
+            open={drawerOpen}
+            onToggle={() => setDrawerOpen(d => !d)}
+            onSelectReport={handleSelectFromDrawer}
+            isMobile={isMobile}
+          />
           {reportsLoading && (
             <div style={{
               position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
